@@ -1,0 +1,711 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Pizza 3D - Scan QR Code</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.min.js"></script>
+    <style>
+        :root{
+            --bg-grad: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --card-padding: 40px;
+            --card-radius: 20px;
+            --primary: #667eea;
+            --accent: #764ba2;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-grad);
+            overflow-x: hidden;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        #startScreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            background: var(--bg-grad);
+            padding: 20px;
+        }
+        #startScreen.hidden {
+            display: none;
+        }
+        .card {
+            background: white;
+            padding: var(--card-padding);
+            border-radius: var(--card-radius);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            text-align: center;
+            max-width: 500px;
+            width: 100%;
+            margin: 20px;
+        }
+        h1 {
+            color: #333;
+            font-size: 32px;
+            margin-bottom: 20px;
+        }
+        .qr-container {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 15px;
+            margin: 20px 0;
+        }
+        #qrcode {
+            margin: 20px auto;
+            padding: 10px;
+            background: white;
+            border-radius: 10px;
+            display: inline-block;
+        }
+        .instructions {
+            text-align: left;
+            margin: 20px 0;
+            padding: 20px;
+            background: #e3f2fd;
+            border-radius: 10px;
+            border-left: 4px solid #2196F3;
+        }
+        .instructions h3 {
+            color: #1976D2;
+            margin-bottom: 10px;
+        }
+        .instructions li {
+            margin: 8px 0;
+            color: #555;
+        }
+        button {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 12px 18px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 8px;
+            transition: all 0.2s;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.25);
+        }
+        button:hover {
+            background: var(--accent);
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px rgba(102, 126, 234, 0.35);
+        }
+        #scannerScreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: none;
+            z-index: 999;
+            background: black;
+        }
+        #scannerScreen.active {
+            display: block;
+        }
+        /* make video cover whole screen and keep aspect */
+        #video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            -webkit-transform: none;
+            transform: none;
+        }
+        #canvas {
+            display: none;
+        }
+        .scanner-overlay {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: min(80vw, 320px);
+            height: min(80vw, 320px);
+            border: 3px solid #4CAF50;
+            border-radius: 20px;
+            box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+        }
+        .scanner-corner {
+            position: absolute;
+            width: 28px;
+            height: 28px;
+            border: 4px solid #4CAF50;
+        }
+        .scanner-corner.top-left {
+            top: -3px;
+            left: -3px;
+            border-right: none;
+            border-bottom: none;
+        }
+        .scanner-corner.top-right {
+            top: -3px;
+            right: -3px;
+            border-left: none;
+            border-bottom: none;
+        }
+        .scanner-corner.bottom-left {
+            bottom: -3px;
+            left: -3px;
+            border-right: none;
+            border-top: none;
+        }
+        .scanner-corner.bottom-right {
+            bottom: -3px;
+            right: -3px;
+            border-left: none;
+            border-top: none;
+        }
+        .scan-text {
+            position: absolute;
+            bottom: calc(-1.5 * 1rem);
+            left: 50%;
+            transform: translateX(-50%);
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+            white-space: nowrap;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        #arScreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            display: none;
+            overflow: hidden;
+        }
+        #arScreen.active {
+            display: block;
+        }
+        /* make three.js canvas fill the AR container */
+        #arScreen canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            max-width: 350px;
+            z-index: 10;
+        }
+        .soal {
+            background: #f0f4ff;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            border-left: 4px solid var(--primary);
+        }
+        .soal h3 {
+            color: var(--primary);
+            margin-bottom: 8px;
+        }
+        .fraction-display {
+            font-size: 48px;
+            font-weight: bold;
+            text-align: center;
+            color: var(--accent);
+            margin: 20px 0;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+        }
+        .fraction-line {
+            display: inline-block;
+            width: 60px;
+            height: 3px;
+            background: var(--accent);
+            vertical-align: middle;
+            margin: 0 5px;
+        }
+        .controls {
+            margin-top: 15px;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 2px solid #e0e0e0;
+        }
+        .stat-item {
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: var(--primary);
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+        }
+        .close-btn {
+            position: absolute;
+            top: 18px;
+            right: 18px;
+            background: rgba(255, 255, 255, 0.9);
+            border: none;
+            width: 46px;
+            height: 46px;
+            border-radius: 50%;
+            font-size: 22px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            z-index: 11;
+        }
+
+        /* Responsive tweaks */
+        @media (max-width: 640px) {
+            h1 { font-size: 22px; }
+            .card { padding: 20px; }
+            .fraction-display { font-size: 36px; }
+            .controls button { width: 100%; margin: 8px 0; }
+            #info { left: 12px; right: 12px; max-width: none; padding: 12px; top: 12px; }
+            .scanner-overlay { width: min(70vw, 280px); height: min(70vw, 280px); }
+            .scan-text { font-size: 14px; bottom: -40px; }
+        }
+
+        @media (min-width: 1200px) {
+            .card { max-width: 700px; }
+            .fraction-display { font-size: 56px; }
+            #info { max-width: 420px; }
+        }
+    </style>
+</head>
+<body>
+    <!-- Start Screen -->
+    <div id="startScreen">
+        <div class="card">
+            <h1>🍕 AR Pizza Matematika 3D</h1>
+            <p style="color: #666; margin-bottom: 20px;">Pembelajaran Pecahan dengan Augmented Reality</p>
+            
+            <div class="qr-container">
+                <h3 style="color: #333;">QR Code untuk Di-Scan:</h3>
+                <div id="qrcode"></div>
+                <p style="color: #888; font-size: 14px;">Simpan atau screenshot QR Code ini</p>
+            </div>
+
+            <div class="instructions">
+                <h3>📱 Cara Menggunakan:</h3>
+                <ol>
+                    <li>Screenshot QR Code di atas</li>
+                    <li>Klik tombol "Mulai Scan"</li>
+                    <li>Arahkan kamera ke QR Code</li>
+                    <li>Pizza 3D akan muncul!</li>
+                    <li>Klik potongan untuk menjawab soal</li>
+                </ol>
+            </div>
+
+            <button onclick="startScanner()">📸 Mulai Scan QR Code</button>
+            <button onclick="skipToAR()">⏭️ Langsung ke Pizza 3D</button>
+        </div>
+    </div>
+
+    <!-- Scanner Screen -->
+    <div id="scannerScreen">
+        <video id="video" autoplay playsinline></video>
+        <canvas id="canvas"></canvas>
+        <div class="scanner-overlay">
+            <div class="scanner-corner top-left"></div>
+            <div class="scanner-corner top-right"></div>
+            <div class="scanner-corner bottom-left"></div>
+            <div class="scanner-corner bottom-right"></div>
+            <div class="scan-text">Arahkan ke QR Code</div>
+        </div>
+        <button class="close-btn" onclick="closeScanner()">✕</button>
+    </div>
+
+    <!-- AR Screen -->
+    <div id="arScreen">
+        <div id="info">
+            <h1 style="font-size: 20px;">🍕 Pizza Matematika</h1>
+            
+            <div class="soal">
+                <h3>Soal Pecahan:</h3>
+                <p id="question">Klik pada potongan pizza!</p>
+            </div>
+
+            <div class="fraction-display">
+                <span id="numerator">0</span>
+                <span class="fraction-line"></span>
+                <span id="denominator">6</span>
+            </div>
+
+            <div class="controls">
+                <button onclick="newQuestion()">Soal Baru</button>
+                <button onclick="resetSelection()">Reset</button>
+                <button onclick="checkAnswer()">Cek</button>
+            </div>
+
+            <div class="stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="correct">0</div>
+                    <div class="stat-label">Benar</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="wrong">0</div>
+                    <div class="stat-label">Salah</div>
+                </div>
+            </div>
+        </div>
+        <button class="close-btn" onclick="backToStart()">✕</button>
+    </div>
+
+    <script>
+        let scene, camera, renderer, pizza, slices = [];
+        let selected = [];
+        let currentAnswer = 0;
+        let correctCount = 0, wrongCount = 0;
+        let raycaster, mouse;
+        let video, canvas, canvasCtx;
+        let scanningActive = false;
+
+        // Generate QR Code
+        function generateQRCode() {
+            const qrData = JSON.stringify({
+                app: "pizza-fraction-3d",
+                type: "math-learning",
+                slices: 6,
+                timestamp: Date.now()
+            });
+            
+            const qr = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrData)}`;
+            document.getElementById('qrcode').innerHTML = `<img src="${qr}" alt="QR Code" style="width: 200px; height: 200px;">`;
+        }
+
+        function startScanner() {
+            document.getElementById('startScreen').classList.add('hidden');
+            document.getElementById('scannerScreen').classList.add('active');
+            initScanner();
+        }
+
+        function skipToAR() {
+            document.getElementById('startScreen').classList.add('hidden');
+            showARScreen();
+        }
+
+        function closeScanner() {
+            scanningActive = false;
+            if (video && video.srcObject) {
+                video.srcObject.getTracks().forEach(track => track.stop());
+            }
+            document.getElementById('scannerScreen').classList.remove('active');
+            document.getElementById('startScreen').classList.remove('hidden');
+        }
+
+        function backToStart() {
+            document.getElementById('arScreen').classList.remove('active');
+            document.getElementById('startScreen').classList.remove('hidden');
+        }
+
+        async function initScanner() {
+            video = document.getElementById('video');
+            canvas = document.getElementById('canvas');
+            canvasCtx = canvas.getContext('2d');
+            scanningActive = true;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: 'environment' } 
+                });
+                video.srcObject = stream;
+                video.setAttribute('playsinline', true);
+                video.play();
+                requestAnimationFrame(scanQRCode);
+            } catch (err) {
+                alert('Tidak dapat mengakses kamera. Gunakan tombol "Langsung ke Pizza 3D"');
+                closeScanner();
+            }
+        }
+
+        function scanQRCode() {
+            if (!scanningActive) return;
+
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                canvasCtx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                const imageData = canvasCtx.getImageData(0, 0, canvas.width, canvas.height);
+                const code = jsQR(imageData.data, imageData.width, imageData.height);
+
+                if (code) {
+                    console.log('QR Code detected:', code.data);
+                    scanningActive = false;
+                    video.srcObject.getTracks().forEach(track => track.stop());
+                    document.getElementById('scannerScreen').classList.remove('active');
+                    showARScreen();
+                    return;
+                }
+            }
+
+            requestAnimationFrame(scanQRCode);
+        }
+
+        function showARScreen() {
+            document.getElementById('arScreen').classList.add('active');
+            initAR();
+        }
+
+        function initAR() {
+            const container = document.getElementById('arScreen');
+            
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0xf5f5f5);
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 8, 12);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.domElement.style.width = '100%';
+            renderer.domElement.style.height = '100%';
+            container.appendChild(renderer.domElement);
+
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(5, 10, 7);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+
+            const pointLight = new THREE.PointLight(0xffffff, 0.4);
+            pointLight.position.set(-5, 5, 5);
+            scene.add(pointLight);
+
+            createPizza();
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+
+            renderer.domElement.addEventListener('click', onMouseClick, false);
+            window.addEventListener('resize', onWindowResize, false);
+
+            newQuestion();
+            animate();
+        }
+
+        function createPizza() {
+            pizza = new THREE.Group();
+            
+            const sliceCount = 6;
+            const radius = 3;
+            const anglePerSlice = (Math.PI * 2) / sliceCount;
+
+            for (let i = 0; i < sliceCount; i++) {
+                const slice = createSlice(radius, anglePerSlice, i);
+                slice.userData = { index: i, selected: false };
+                slices.push(slice);
+                pizza.add(slice);
+            }
+
+            scene.add(pizza);
+        }
+
+        function createSlice(radius, angle, index) {
+            const sliceGroup = new THREE.Group();
+            
+            const shape = new THREE.Shape();
+            shape.moveTo(0, 0);
+            shape.arc(0, 0, radius, 0, angle, false);
+            shape.lineTo(0, 0);
+
+            const extrudeSettings = {
+                depth: 0.3,
+                bevelEnabled: true,
+                bevelThickness: 0.05,
+                bevelSize: 0.05,
+                bevelSegments: 3
+            };
+
+            const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+            const material = new THREE.MeshPhongMaterial({ 
+                color: 0xf4a460,
+                shininess: 30
+            });
+            
+            const sliceMesh = new THREE.Mesh(geometry, material);
+            sliceMesh.rotation.x = -Math.PI / 2;
+            
+            const rotationAngle = (index * angle) + (angle / 2);
+            sliceGroup.rotation.y = rotationAngle;
+            sliceGroup.add(sliceMesh);
+
+            const cheeseGeometry = geometry.clone();
+            const cheeseMaterial = new THREE.MeshPhongMaterial({ 
+                color: 0xffd700,
+                shininess: 50
+            });
+            const cheese = new THREE.Mesh(cheeseGeometry, cheeseMaterial);
+            cheese.rotation.x = -Math.PI / 2;
+            cheese.position.y = 0.05;
+            cheese.scale.set(0.95, 0.95, 0.5);
+            sliceGroup.add(cheese);
+
+            const pepperoniCount = 2 + Math.floor(Math.random() * 2);
+            for (let j = 0; j < pepperoniCount; j++) {
+                const pepperoni = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.15, 0.15, 0.05, 16),
+                    new THREE.MeshPhongMaterial({ color: 0x8b0000 })
+                );
+                const distance = 0.8 + Math.random() * 1.5;
+                const pepAngle = Math.random() * angle * 0.8 + angle * 0.1;
+                pepperoni.position.set(
+                    Math.cos(pepAngle) * distance,
+                    0.2,
+                    Math.sin(pepAngle) * distance
+                );
+                pepperoni.rotation.x = Math.PI / 2;
+                sliceGroup.add(pepperoni);
+            }
+
+            return sliceGroup;
+        }
+
+        function onMouseClick(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(pizza.children, true);
+
+            if (intersects.length > 0) {
+                let clickedSlice = intersects[0].object;
+                while (clickedSlice.parent !== pizza) {
+                    clickedSlice = clickedSlice.parent;
+                }
+                toggleSlice(clickedSlice);
+            }
+        }
+
+        function toggleSlice(slice) {
+            const index = slice.userData.index;
+            
+            if (slice.userData.selected) {
+                slice.userData.selected = false;
+                selected = selected.filter(i => i !== index);
+                animateSlice(slice, 0);
+            } else {
+                slice.userData.selected = true;
+                selected.push(index);
+                animateSlice(slice, 1);
+            }
+
+            updateFractionDisplay();
+        }
+
+        function animateSlice(slice, targetY) {
+            const startY = slice.position.y;
+            const endY = targetY;
+            const duration = 500;
+            const startTime = Date.now();
+
+            function update() {
+                const elapsed = Date.now() - startTime;
+                const progress = Math.min(elapsed / duration, 1);
+                const eased = 1 - Math.pow(1 - progress, 3);
+                
+                slice.position.y = startY + (endY - startY) * eased;
+
+                if (progress < 1) {
+                    requestAnimationFrame(update);
+                }
+            }
+            update();
+        }
+
+        function updateFractionDisplay() {
+            document.getElementById('numerator').textContent = selected.length;
+        }
+
+        function newQuestion() {
+            resetSelection();
+            currentAnswer = Math.floor(Math.random() * 5) + 1;
+            
+            const questions = [
+                `Pilih ${currentAnswer} potongan pizza dari 6 potongan!`,
+                `Berapa ${currentAnswer}/6 dari pizza ini?`,
+                `Tunjukkan pecahan ${currentAnswer}/6 pada pizza!`
+            ];
+            
+            document.getElementById('question').textContent = questions[Math.floor(Math.random() * questions.length)];
+        }
+
+        function resetSelection() {
+            selected.forEach(index => {
+                slices[index].userData.selected = false;
+                slices[index].position.y = 0;
+            });
+            selected = [];
+            updateFractionDisplay();
+        }
+
+        function checkAnswer() {
+            if (selected.length === currentAnswer) {
+                correctCount++;
+                document.getElementById('correct').textContent = correctCount;
+                alert('🎉 Benar! Hebat!');
+                newQuestion();
+            } else {
+                wrongCount++;
+                document.getElementById('wrong').textContent = wrongCount;
+                alert(`❌ Belum tepat. Kamu memilih ${selected.length}/6, seharusnya ${currentAnswer}/6. Coba lagi!`);
+            }
+        }
+
+        function onWindowResize() {
+            if (camera && renderer) {
+                const container = document.getElementById('arScreen');
+                const width = container.clientWidth || window.innerWidth;
+                const height = container.clientHeight || window.innerHeight;
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+                renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+                renderer.setSize(width, height);
+            }
+        }
+
+        function animate() {
+            if (!document.getElementById('arScreen').classList.contains('active')) return;
+            
+            requestAnimationFrame(animate);
+            pizza.rotation.y += 0.002;
+            renderer.render(scene, camera);
+        }
+
+        // Initialize
+        generateQRCode();
+    </script>
+</body>
+</html>
