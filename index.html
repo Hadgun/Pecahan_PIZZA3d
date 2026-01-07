@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AR Pizza 3D - Scan QR Code</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.min.js"></script>
+    <!-- PERBAIKAN: URL jsQR yang benar -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     <style>
         :root{
             --bg-grad: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -118,7 +119,6 @@
         #scannerScreen.active {
             display: block;
         }
-        /* make video cover whole screen and keep aspect */
         #video {
             position: absolute;
             top: 0;
@@ -142,6 +142,7 @@
             border: 3px solid #4CAF50;
             border-radius: 20px;
             box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+            transition: border-color 0.3s;
         }
         .scanner-corner {
             position: absolute;
@@ -196,7 +197,6 @@
         #arScreen.active {
             display: block;
         }
-        /* make three.js canvas fill the AR container */
         #arScreen canvas {
             position: absolute;
             top: 0;
@@ -204,6 +204,8 @@
             width: 100%;
             height: 100%;
             display: block;
+            touch-action: none;
+            cursor: pointer;
         }
         #info {
             position: absolute;
@@ -280,7 +282,6 @@
             z-index: 11;
         }
 
-        /* Responsive tweaks */
         @media (max-width: 640px) {
             h1 { font-size: 22px; }
             .card { padding: 20px; }
@@ -385,6 +386,7 @@
         let raycaster, mouse;
         let video, canvas, canvasCtx;
         let scanningActive = false;
+        let animationFrameId = null;
 
         // Generate QR Code
         function generateQRCode() {
@@ -420,8 +422,59 @@
         }
 
         function backToStart() {
+            // Stop animation loop
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            
+            // Clean up Three.js
+            cleanupThreeJS();
+            
+            // Hide AR screen
             document.getElementById('arScreen').classList.remove('active');
+            
+            // Show start screen
             document.getElementById('startScreen').classList.remove('hidden');
+        }
+
+        function cleanupThreeJS() {
+            // Remove event listeners
+            if (renderer && renderer.domElement) {
+                renderer.domElement.removeEventListener('click', onMouseClick);
+                renderer.domElement.removeEventListener('touchstart', onTouchStart);
+            }
+            window.removeEventListener('resize', onWindowResize);
+            
+            // Dispose geometries and materials
+            if (slices && slices.length > 0) {
+                slices.forEach(slice => {
+                    slice.traverse(child => {
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) {
+                            if (Array.isArray(child.material)) {
+                                child.material.forEach(material => material.dispose());
+                            } else {
+                                child.material.dispose();
+                            }
+                        }
+                    });
+                });
+            }
+            
+            // Remove renderer from DOM
+            if (renderer && renderer.domElement && renderer.domElement.parentNode) {
+                renderer.domElement.parentNode.removeChild(renderer.domElement);
+                renderer.dispose();
+                renderer = null;
+            }
+            
+            // Reset variables
+            scene = null;
+            camera = null;
+            pizza = null;
+            slices = [];
+            selected = [];
         }
 
         async function initScanner() {
@@ -431,15 +484,26 @@
             scanningActive = true;
 
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: 'environment' } 
-                });
+                const constraints = {
+                    video: { 
+                        facingMode: 'environment',
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    }
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                 video.srcObject = stream;
                 video.setAttribute('playsinline', true);
-                video.play();
-                requestAnimationFrame(scanQRCode);
+                
+                // Wait for video to be ready
+                video.onloadedmetadata = () => {
+                    video.play();
+                    requestAnimationFrame(scanQRCode);
+                };
             } catch (err) {
-                alert('Tidak dapat mengakses kamera. Gunakan tombol "Langsung ke Pizza 3D"');
+                console.error('Camera error:', err);
+                alert('Tidak dapat mengakses kamera. Pastikan izin kamera sudah diberikan atau gunakan tombol "Langsung ke Pizza 3D"');
                 closeScanner();
             }
         }
@@ -457,38 +521,70 @@
 
                 if (code) {
                     console.log('QR Code detected:', code.data);
+                    
+                    // Vibrate if available
+                    if (navigator.vibrate) {
+                        navigator.vibrate(200);
+                    }
+                    
+                    // Visual feedback
+                    const scanText = document.querySelector('.scan-text');
+                    const scannerOverlay = document.querySelector('.scanner-overlay');
+                    if (scanText) scanText.textContent = '✓ QR Code Terdeteksi!';
+                    if (scannerOverlay) scannerOverlay.style.borderColor = '#4CAF50';
+                    
+                    // Stop scanning and transition
                     scanningActive = false;
-                    video.srcObject.getTracks().forEach(track => track.stop());
-                    document.getElementById('scannerScreen').classList.remove('active');
-                    showARScreen();
+                    if (video && video.srcObject) {
+                        video.srcObject.getTracks().forEach(track => track.stop());
+                    }
+                    
+                    setTimeout(() => {
+                        document.getElementById('scannerScreen').classList.remove('active');
+                        showARScreen();
+                    }, 800);
                     return;
                 }
             }
 
-            requestAnimationFrame(scanQRCode);
+            if (scanningActive) {
+                requestAnimationFrame(scanQRCode);
+            }
         }
 
         function showARScreen() {
             document.getElementById('arScreen').classList.add('active');
-            initAR();
+            // Give time for screen to render before init
+            setTimeout(() => {
+                initAR();
+            }, 100);
         }
 
         function initAR() {
             const container = document.getElementById('arScreen');
             
+            // Clean up if exists
+            cleanupThreeJS();
+            
             scene = new THREE.Scene();
             scene.background = new THREE.Color(0xf5f5f5);
 
-            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            const width = container.clientWidth || window.innerWidth;
+            const height = container.clientHeight || window.innerHeight;
+
+            camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
             camera.position.set(0, 8, 12);
             camera.lookAt(0, 0, 0);
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({ 
+                antialias: true, 
+                alpha: true,
+                powerPreference: "high-performance"
+            });
             renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setSize(width, height);
             renderer.shadowMap.enabled = true;
-            renderer.domElement.style.width = '100%';
-            renderer.domElement.style.height = '100%';
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             container.appendChild(renderer.domElement);
 
             const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -503,16 +599,21 @@
             pointLight.position.set(-5, 5, 5);
             scene.add(pointLight);
 
+            // Reset slices array
+            slices = [];
             createPizza();
 
             raycaster = new THREE.Raycaster();
             mouse = new THREE.Vector2();
 
             renderer.domElement.addEventListener('click', onMouseClick, false);
+            renderer.domElement.addEventListener('touchstart', onTouchStart, { passive: false });
             window.addEventListener('resize', onWindowResize, false);
 
             newQuestion();
             animate();
+            
+            console.log('AR initialized successfully');
         }
 
         function createPizza() {
@@ -597,15 +698,39 @@
             mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
             mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
+            handleSliceSelection();
+        }
+
+        function onTouchStart(event) {
+            // PERBAIKAN: Prevent default untuk menghindari zoom dan scroll
+            event.preventDefault();
+            if (event.touches.length > 0) {
+                const touch = event.touches[0];
+                const rect = renderer.domElement.getBoundingClientRect();
+                mouse.x = ((touch.clientX - rect.left) / rect.width) * 2 - 1;
+                mouse.y = -((touch.clientY - rect.top) / rect.height) * 2 + 1;
+
+                handleSliceSelection();
+            }
+        }
+
+        function handleSliceSelection() {
             raycaster.setFromCamera(mouse, camera);
+            
+            // Intersect with all pizza children recursively
             const intersects = raycaster.intersectObjects(pizza.children, true);
 
             if (intersects.length > 0) {
+                // Find the parent slice group
                 let clickedSlice = intersects[0].object;
-                while (clickedSlice.parent !== pizza) {
+                while (clickedSlice.parent && clickedSlice.parent !== pizza) {
                     clickedSlice = clickedSlice.parent;
                 }
-                toggleSlice(clickedSlice);
+                
+                // Make sure we have a valid slice
+                if (clickedSlice.parent === pizza && clickedSlice.userData) {
+                    toggleSlice(clickedSlice);
+                }
             }
         }
 
@@ -617,6 +742,12 @@
                 selected = selected.filter(i => i !== index);
                 animateSlice(slice, 0);
             } else {
+                // PERBAIKAN: Batasi maksimal pilihan sesuai denominator
+                if (selected.length >= 6) {
+                    alert('Maksimal 6 potongan pizza!');
+                    return;
+                }
+                
                 slice.userData.selected = true;
                 selected.push(index);
                 animateSlice(slice, 1);
@@ -651,7 +782,7 @@
 
         function newQuestion() {
             resetSelection();
-            currentAnswer = Math.floor(Math.random() * 5) + 1;
+            currentAnswer = Math.floor(Math.random() * 6) + 1; // 1-6
             
             const questions = [
                 `Pilih ${currentAnswer} potongan pizza dari 6 potongan!`,
@@ -664,8 +795,10 @@
 
         function resetSelection() {
             selected.forEach(index => {
-                slices[index].userData.selected = false;
-                slices[index].position.y = 0;
+                if (slices[index]) {
+                    slices[index].userData.selected = false;
+                    slices[index].position.y = 0;
+                }
             });
             selected = [];
             updateFractionDisplay();
@@ -697,15 +830,27 @@
         }
 
         function animate() {
-            if (!document.getElementById('arScreen').classList.contains('active')) return;
+            const arScreen = document.getElementById('arScreen');
+            if (!arScreen.classList.contains('active') || !renderer || !scene || !camera) {
+                return;
+            }
             
-            requestAnimationFrame(animate);
-            pizza.rotation.y += 0.002;
+            animationFrameId = requestAnimationFrame(animate);
+            
+            if (pizza) {
+                pizza.rotation.y += 0.002;
+            }
+            
             renderer.render(scene, camera);
         }
 
         // Initialize
         generateQRCode();
+        
+        // PERBAIKAN: Tambahan untuk memastikan QR code ter-generate dengan baik
+        window.addEventListener('DOMContentLoaded', function() {
+            generateQRCode();
+        });
     </script>
 </body>
 </html>
